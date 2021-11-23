@@ -2,11 +2,14 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import json
+import grequests
 
 r = requests.get('http://ac.hkie.org.hk/')
-URLs = []
+urls = []
 divisonIDs = []
 divisonNames = []
+rss = []
+
 if r.status_code == requests.codes.ok:
     soup = BeautifulSoup(r.text, 'html.parser')
     a_tag = soup.find_all(href=re.compile("http"), class_="a1")
@@ -15,21 +18,23 @@ if r.status_code == requests.codes.ok:
     # print(a_href_tag)
     for tag in a_tag:
         # print(tag.get('href'))
-        URLs.append(tag.get('href'))
-    for x in range(0,len(URLs)):
-        if URLs[x][-1]!="/":
-            URLs[x] += "/"
-        URLs[x]= URLs[x] + "en_Events_Up.aspx?TypeSql=&&TypeName=Events+%2f+Activities"
-
-    print(URLs)
+        urls.append(tag.get('href'))
+    for x in range(0,len(urls)):
+        if urls[x][-1]!="/":
+            urls[x] += "/"
+        urls[x]= urls[x] + "en_Events_Up.aspx?TypeSql=&&TypeName=Events+%2f+Activities"
+    # print(urls)
     b_tag = soup.find(id="divMenuTest").find_all("a")
-    for tag in b_tag:
         # print(tag.string)
+    for tag in b_tag :
         divisonNames.append(tag.string)
-    # print(divisonNames)
-# def func(x):
-#     return x + 1
-#
-#
-# def test_answer():
-#     assert func(3) == 5
+    # for URL in urls:
+    #     r = requests.get(URL)
+    #     soup = BeautifulSoup(r.text, 'html.parser')
+    #     print(soup)
+    rs = (grequests.get(u) for u in urls)
+    results = grequests.map(rs)
+    for result in results:
+        if result != None:
+            rss.append(BeautifulSoup(result.text, 'html.parser').find("form"))
+    print (rss)
