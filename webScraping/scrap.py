@@ -22,7 +22,7 @@ if r.status_code == requests.codes.ok:
     for x in range(0,len(urls)):
         if urls[x][-1]!="/":
             urls[x] += "/"
-        urls[x]= urls[x] + "en_Events_Up.aspx?TypeSql=&&TypeName=Events+%2f+Activities"
+        urls[x]= urls[x] + "en_Events_Up_Item.aspx"
     # print(urls)
     b_tag = soup.find(id="divMenuTest").find_all("a")
         # print(tag.string)
