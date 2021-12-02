@@ -1,109 +1,146 @@
 import requests
 from bs4 import BeautifulSoup
 import urllib
-# import grequests
+import re
 
-mainPageUrl = "https://hkie.org.hk/"
-divisionAppendix = "membership/division/"
-eventAppendix = "en_Events_Up_Item.aspx"
+from concurrent.futures import ThreadPoolExecutor
 
-def getAllInfo():
-    pass
+from event import Event
 
-def getRequest(url):
-    r = requests.get(url)
-    return r
+class Spider:
+    def __init__(self):
+        self.eventAppendix = "en_Events_Up_Item.aspx"
 
-def getDivisionName(r):
-    divisonName = []
-    if r.status_code == requests.codes.ok:
+    def getRequest(self,url):
+        try:
+            r = requests.get(url)
+        except Exception as err:
+            print(f'Error occurred: {err}')
+            sys.exit()
+        else:
+            assert r.status_code == 200
+            return r
+
+    def getDivisionList(self,r):
+        dvisionNameArr = []
+        divisionUrlArr = []
         soup = BeautifulSoup(r.text, 'html.parser')
         tag = soup.find(class_="editor").find_all("a")
         for t in tag :
-            divisonName.append(t.string.split(" (")[0])
-        return divisonName
-    else:
-        return -1
+            dvisionNameArr.append(t.string.split(" (")[0])
+            divisionUrlArr.append(t.get('href'))
+        for i in range(0,len(divisionUrlArr)):
+            if divisionUrlArr[i][-1]!="/":
+                divisionUrlArr[i] += "/"
+        return dvisionNameArr, divisionUrlArr
 
-def getDivisionUrl(r):
-    divisionUrl = []
-    if r.status_code == requests.codes.ok:
-        soup = BeautifulSoup(r.text, 'html.parser')
-        tag = soup.find(class_="editor").find_all("a")
-        for t in tag:
-            divisionUrl.append(t.get('href'))
-        for x in range(0,len(divisionUrl)):
-            if divisionUrl[x][-1]!="/":
-                divisionUrl[x] += "/"
-            # urls[x]= urls[x] + "en_Events_Up_Item.aspx"
-        return divisionUrl
-    else:
-        return -1
+    def aspxRequest(self, r, pageNumber):
+        if r.status_code == requests.codes.ok:
+            key = "16"
+            if (pageNumber >= 10):
+                key = "17"
+            soup = BeautifulSoup(r.text, 'html.parser')
+            VIEWSTATE = soup.find(id="__VIEWSTATE")['value']
+            VIEWSTATEGENERATOR = soup.find(id="__VIEWSTATEGENERATOR")['value']
+            EVENTVALIDATION = soup.find(id="__EVENTVALIDATION")['value']
 
-def mapping(name, url):
-    dicts = []
-    for i in range(0, len(name)):
-        dicts.append({"divisionName": name[i], "divisionUrl": url[i]})
-    return dicts
+            header = {
+                "Content-Type":"application/x-www-form-urlencoded; charset=UTF-8",
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate",
+                "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8,zh-TW;q=0.7,zh;q=0.6",
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 Safari/537.36"
+            }
 
-def aspxRequest(r):
-    if r.status_code == requests.codes.ok:
-        soup = BeautifulSoup(r.text, 'html.parser')
-        VIEWSTATE = soup.find(id="__VIEWSTATE")['value']
-        VIEWSTATEGENERATOR = soup.find(id="__VIEWSTATEGENERATOR")['value']
-        EVENTVALIDATION = soup.find(id="__EVENTVALIDATION")['value']
+            body = {
+                "__VIEWSTATE":urllib.parse.quote_plus(VIEWSTATE),
+                "__VIEWSTATEGENERATOR": VIEWSTATEGENERATOR,
+                "__EVENTTARGET": "",
+                "__EVENTARGUMENT": "",
+                "Grid%24DXSelInput": "",
+                "hf_SubMenuID": "",
+                "hf_ISeq": "",
+                "__CALLBACKID": "Grid",
+                "__CALLBACKPARAM": "GB%7C"+ key +"%3BPAGERONCLICK%7CPN"+str(pageNumber)+"%3B",
+                "__EVENTVALIDATION": urllib.parse.quote_plus(EVENTVALIDATION)
+            }
 
-        header = {
-            "Content-Type":"application/x-www-form-urlencoded; charset=UTF-8",
-            "Accept": "*/*",
-            "Accept-Encoding": "gzip, deflate",
-            "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8,zh-TW;q=0.7,zh;q=0.6",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 Safari/537.36"
-        }
+            payload=""
 
-        body = {
-            "__VIEWSTATE":urllib.parse.quote_plus(VIEWSTATE),
-            "__VIEWSTATEGENERATOR": VIEWSTATEGENERATOR,
-            "__EVENTTARGET": "",
-            "__EVENTARGUMENT": "",
-            "Grid%24DXSelInput": "",
-            "hf_SubMenuID": "",
-            "hf_ISeq": "",
-            "__CALLBACKID": "Grid",
-            "__CALLBACKPARAM": "GB%7C16%3BPAGERONCLICK%7CPN60%3B",
-            "__EVENTVALIDATION": urllib.parse.quote_plus(EVENTVALIDATION)
-        }
+            for key, value in body.items():
+                payload = payload + key + "=" + value + "&"
 
-        payload=""
+            session = requests.Session()
 
-        for key, value in body.items():
-            payload = payload + key + "=" + value + "&"
+            response = session.post(url=r.url, headers=header, data=payload[:-1])
 
-        session = requests.Session()
+            print("Page " + str(pageNumber+1) + " post request done")
+            return response
 
-        response = session.post(url=r.url, headers=header, data=payload[:-1])
-        if response.status_code == requests.codes.ok:
-            soup = BeautifulSoup(response.text, 'html.parser')
+    def getEventsList(self, r): #return a list of event object for each division
+        if(r):
+            eventObjArr = []
+            soup = BeautifulSoup(r.text, 'html.parser')
+            pageNumber = int(soup.find("td", {"class":"dxpSummary_BlackGlass"}).string.split('of ')[-1].split(' (')[0])
+            print("Number of page : " + str(pageNumber) + " for URL : " + r.url)
+
+            #shorter test time
+            # if(pageNumber>=10):
+            #     pageNumber = 5
+
+            list_of_urls = [r]*pageNumber
+            list_of_page = [i for i in range(0, pageNumber)]
+            with ThreadPoolExecutor(max_workers=10) as pool:
+                response_list = list(pool.map(self.aspxRequest, list_of_urls, list_of_page))
+
+            for response in response_list:
+                eventObjArr.extend(self.getEventTable(response))
+            # for i in range(0, pageNumber):
+            #     soup = BeautifulSoup(r.text, 'html.parser')
+            #     response = self.aspxRequest(r, i)
+            #     print("Page " + str(i+1) + " response:" + str(response))
+            #     eventObjArr.extend(self.getEventTable(response))
+            return eventObjArr
+
+            # d = spider.toDict(r)
+    def getEventTable(self, r): # return a list of event object for each event page`
+        if(r):
+            soup = BeautifulSoup(r.text, 'html.parser')
             table = soup.find("table" ,id="Grid_DXMainTable")
-            return table
+            eventTable = soup.findAll("td", id=re.compile("Grid_tccell.*"))
+            eventObjArr = self.getEvent(r, eventTable)
+            return eventObjArr
 
+    def getEvent(self, r, eventTable):
+        eventObjArr = []
+        if(r):
+            soup = BeautifulSoup(r.text, 'html.parser')
+            table = soup.find("table" ,id="Grid_DXMainTable")
+            eventTable = soup.findAll("td", id=re.compile("Grid_tccell.*"))
+            eventDate = ""
+            eventType = ""
+            eventName = ""
+            eventUrl = ""
 
-# print (getDivisionName(getResponse(mainPageUrl+divisionAppendix)))
-# urlList = getDivisionUrl(getRequest(mainPageUrl+divisionAppendix))
-# print (urlList)
-# rs = (grequests.get(u) for u in urlList)
-# results = grequests.map(rs)
-# for result in results:
-#     if result != None:
-#         print(result.text)
-r = getRequest(mainPageUrl+divisionAppendix)
-dict = mapping(getDivisionName(r),getDivisionUrl(r))
+            for e in eventTable:
+                if(re.match('.*_0', e.get('id'))):
+                    if (e.string is not None):
+                        eventDate = e.string.strip()
+                elif(re.match('.*_1', e.get('id'))):
+                    if (e.string is not None):
+                        eventType = e.string.strip()
+                else:
+                    if(e.find('a') is not None):
+                        eventName = e.find('a').string
+                        eventUrl = e.find('a').get('href')
+                    else:
+                        eventName = e.find('span').string
+                if (eventDate and eventType and eventName):
+                    eventObjArr.append(Event(eventName, eventDate, eventType, eventUrl))
+                    eventDate = ""
+                    eventType = ""
+                    eventName = ""
+                    eventUrl = ""
+        return eventObjArr
 
-for d in dict:
-    if (d["divisionUrl"].find("hkie.org.hk") != -1) and (d["divisionUrl"].find("cdrc") == -1):
-        resp = aspxRequest(getRequest(d["divisionUrl"]+eventAppendix))
-        print(d["divisionUrl"]+eventAppendix)
-    else:
-        print ("URL : " + d["divisionUrl"] +" not suit for scrapping")
-
-# print(dict[0]["divisionUrl"])
+spider = Spider()
